@@ -16,6 +16,7 @@ from .database import PaymentRepository
 from .services import format_payment, resolve_receipt_path
 
 LOGGER = logging.getLogger(__name__)
+UNAUTHORIZED_MESSAGE = "You are not authorized to use this bot. Please contact an administrator."
 
 
 class PaymentBot:
@@ -34,6 +35,7 @@ class PaymentBot:
         reviewer = self.reviewer(update)
         if reviewer is None:
             LOGGER.warning("Unauthorized payment request user=%s chat=%s", update.effective_user.id if update.effective_user else None, update.effective_chat.id if update.effective_chat else None)
+            await update.effective_message.reply_text(UNAUTHORIZED_MESSAGE)
             return
         requested_id = context.args[0] if context.args else None
         if requested_id:
@@ -80,6 +82,7 @@ class PaymentBot:
         await query.answer()
         reviewer = self.reviewer(update)
         if reviewer is None:
+            await query.message.reply_text(UNAUTHORIZED_MESSAGE)
             return
         page = int(query.data.split(":", 1)[1])
         await self.send_page(query.message, reviewer, page)
@@ -87,6 +90,8 @@ class PaymentBot:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if self.reviewer(update) is not None:
             await update.effective_message.reply_text("Use /payments to view pending payment requests.")
+        else:
+            await update.effective_message.reply_text(UNAUTHORIZED_MESSAGE)
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if self.reviewer(update) is not None:
@@ -97,6 +102,8 @@ class PaymentBot:
                 "/pay - Short alias for /payments\n"
                 "/help - Show this help message"
             )
+        else:
+            await update.effective_message.reply_text(UNAUTHORIZED_MESSAGE)
 
     async def set_commands(self, application: Application) -> None:
         await application.bot.set_my_commands([
