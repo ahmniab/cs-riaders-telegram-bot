@@ -1,0 +1,10 @@
+# Copy this file to reviewers.yaml and replace the example IDs.
+# Telegram numeric user IDs are preferred over usernames or phone numbers.
+authorized_users:
+  - telegram_user_id: 123456789
+    name: Finance reviewer
+    allowed_chat_ids:
+      - -1001234567890
+    allowed_payment_numbers:
+      - "01000000000"
+
