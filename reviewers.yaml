@@ -2,6 +2,6 @@ authorized_users:
   - telegram_user_id: 1393727448
     name: ahmed
     allowed_chat_ids:
-      - -5561369036
+      - -1004349648008
     allowed_payment_numbers:
       - "01099998888"

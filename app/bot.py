@@ -9,6 +9,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageReactionHandler,
 )
 
 from .config import Settings
@@ -17,12 +18,17 @@ from .services import format_payment, resolve_receipt_path
 
 LOGGER = logging.getLogger(__name__)
 UNAUTHORIZED_MESSAGE = "You are not authorized to use this bot. Please contact an administrator."
+THUMBS_UP = "👍"
 
 
 class PaymentBot:
     def __init__(self, settings: Settings, repository: PaymentRepository) -> None:
         self.settings = settings
         self.repository = repository
+
+    @staticmethod
+    def _has_thumbs_up(reactions) -> bool:
+        return any(getattr(reaction, "emoji", None) == THUMBS_UP for reaction in reactions)
 
     def reviewer(self, update: Update):
         user = update.effective_user
@@ -69,13 +75,74 @@ class PaymentBot:
         receipt = resolve_receipt_path(payment, self.settings.receipt_storage_root)
         if receipt:
             with receipt.open("rb") as image:
-                await message.reply_photo(
+                sent_message = await message.reply_photo(
                     photo=image,
                     caption=text,
                     parse_mode=ParseMode.HTML,
                 )
+        else:
+            sent_message = await message.reply_text(text, parse_mode=ParseMode.HTML)
+
+        if payment.get("_payment_type") == "order" and sent_message:
+            self.repository.record_order_message(
+                sent_message.chat_id,
+                sent_message.message_id,
+                str(payment["order_id"]),
+            )
+            LOGGER.info(
+                "Recorded order message mapping order=%s chat=%s message=%s",
+                payment["order_id"],
+                sent_message.chat_id,
+                sent_message.message_id,
+            )
+
+    async def reaction(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        reaction_update = update.message_reaction
+        reviewer = self.reviewer(update)
+        if reaction_update is None:
             return
-        await message.reply_text(text, parse_mode=ParseMode.HTML)
+
+        LOGGER.info(
+            "Received message reaction chat=%s message=%s user=%s old=%s new=%s",
+            reaction_update.chat.id,
+            reaction_update.message_id,
+            reaction_update.user.id if reaction_update.user else None,
+            reaction_update.old_reaction,
+            reaction_update.new_reaction,
+        )
+        if reviewer is None:
+            LOGGER.warning(
+                "Ignoring reaction from unauthorized user=%s chat=%s",
+                reaction_update.user.id if reaction_update.user else None,
+                reaction_update.chat.id,
+            )
+            return
+
+        had_thumbs_up = self._has_thumbs_up(reaction_update.old_reaction)
+        has_thumbs_up = self._has_thumbs_up(reaction_update.new_reaction)
+        if had_thumbs_up == has_thumbs_up:
+            return
+
+        verified = has_thumbs_up
+        order_id = self.repository.verify_order_for_message(
+            reaction_update.chat.id,
+            reaction_update.message_id,
+            verified,
+        )
+        if not order_id:
+            LOGGER.warning(
+                "No order mapping found for reacted message chat=%s message=%s",
+                reaction_update.chat.id,
+                reaction_update.message_id,
+            )
+            return
+        LOGGER.info(
+            "Order %s marked verified_by_cs_raider_bot=%s by user=%s chat=%s",
+            order_id,
+            verified,
+            reviewer.telegram_user_id,
+            reaction_update.chat.id,
+        )
 
     async def pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -113,6 +180,40 @@ class PaymentBot:
             BotCommand("help", "Show available commands"),
         ])
 
+        bot = await application.bot.get_me()
+        LOGGER.info("Telegram bot identity id=%s username=%s", bot.id, bot.username)
+        chat_ids = sorted({
+            chat_id
+            for reviewer in self.settings.reviewers
+            for chat_id in reviewer.allowed_chat_ids
+        })
+        for chat_id in chat_ids:
+            try:
+                chat = await application.bot.get_chat(chat_id)
+                administrators = await application.bot.get_chat_administrators(chat_id)
+            except Exception:
+                LOGGER.exception("Could not inspect bot administrator status in chat=%s", chat_id)
+                continue
+            admin_summary = [
+                f"{admin.user.id}:{admin.user.username or admin.user.full_name}:{admin.status}"
+                for admin in administrators
+            ]
+            bot_admin = next((admin for admin in administrators if admin.user.id == bot.id), None)
+            LOGGER.info(
+                "Telegram chat id=%s title=%s type=%s bot_status=%s administrators=%s",
+                chat.id,
+                chat.title or chat.username or "",
+                chat.type,
+                bot_admin.status if bot_admin else "not listed",
+                admin_summary,
+            )
+            if bot_admin is None or bot_admin.status not in {"administrator", "creator"}:
+                LOGGER.warning(
+                    "Telegram does not report bot id=%s as an administrator in chat=%s; reaction updates will not arrive",
+                    bot.id,
+                    chat_id,
+                )
+
     def application(self) -> Application:
         application = (
             Application.builder()
@@ -126,4 +227,10 @@ class PaymentBot:
         application.add_handler(CommandHandler("pay", self.payments))
         application.add_handler(CommandHandler("help", self.help))
         application.add_handler(CallbackQueryHandler(self.pagination, pattern=r"^payments:\d+$"))
+        application.add_handler(
+            MessageReactionHandler(
+                self.reaction,
+                message_reaction_types=MessageReactionHandler.MESSAGE_REACTION_UPDATED,
+            )
+        )
         return application
