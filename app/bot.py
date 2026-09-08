@@ -19,6 +19,7 @@ from .services import format_payment, resolve_receipt_path
 LOGGER = logging.getLogger(__name__)
 UNAUTHORIZED_MESSAGE = "You are not authorized to use this bot. Please contact an administrator."
 THUMBS_UP = "👍"
+THUMBS_DOWN = "👎"
 
 
 class PaymentBot:
@@ -27,8 +28,15 @@ class PaymentBot:
         self.repository = repository
 
     @staticmethod
-    def _has_thumbs_up(reactions) -> bool:
-        return any(getattr(reaction, "emoji", None) == THUMBS_UP for reaction in reactions)
+    def _reaction_status(reactions) -> str:
+        """Map the user's current reaction to the bot verification state."""
+        if len(reactions) == 1:
+            emoji = getattr(reactions[0], "emoji", None)
+            if emoji == THUMBS_UP:
+                return "verified"
+            if emoji == THUMBS_DOWN:
+                return "disproved"
+        return "pending"
 
     def reviewer(self, update: Update):
         user = update.effective_user
@@ -118,16 +126,15 @@ class PaymentBot:
             )
             return
 
-        had_thumbs_up = self._has_thumbs_up(reaction_update.old_reaction)
-        has_thumbs_up = self._has_thumbs_up(reaction_update.new_reaction)
-        if had_thumbs_up == has_thumbs_up:
+        old_status = self._reaction_status(reaction_update.old_reaction)
+        new_status = self._reaction_status(reaction_update.new_reaction)
+        if old_status == new_status:
             return
 
-        verified = has_thumbs_up
         order_id = self.repository.verify_order_for_message(
             reaction_update.chat.id,
             reaction_update.message_id,
-            verified,
+            new_status,
         )
         if not order_id:
             LOGGER.warning(
@@ -139,7 +146,7 @@ class PaymentBot:
         LOGGER.info(
             "Order %s marked verified_by_cs_raider_bot=%s by user=%s chat=%s",
             order_id,
-            verified,
+            new_status,
             reviewer.telegram_user_id,
             reaction_update.chat.id,
         )

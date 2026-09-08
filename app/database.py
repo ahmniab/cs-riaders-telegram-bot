@@ -33,7 +33,7 @@ class PaymentRepository:
         order_query = {
             "status": "pending",
             "deleted_by_admin": {"$ne": True},
-            "verified_by_cs_raider_bot": {"$ne": True},
+            "verified_by_cs_raider_bot": {"$nin": ["verified", True, "disproved"]},
             "transferred_to": {"$in": numbers},
         }
         recharge_query = {
@@ -58,7 +58,7 @@ class PaymentRepository:
             "order_id": payment_id,
             "status": "pending",
             "deleted_by_admin": {"$ne": True},
-            "verified_by_cs_raider_bot": {"$ne": True},
+            "verified_by_cs_raider_bot": {"$nin": ["verified", True]},
             "transferred_to": number_filter,
         })
         if order:
@@ -87,14 +87,16 @@ class PaymentRepository:
             upsert=True,
         )
 
-    def set_order_verified(self, order_id: str, verified: bool) -> bool:
+    def set_order_verification_status(self, order_id: str, verification_status: str) -> bool:
+        if verification_status not in {"pending", "verified", "disproved"}:
+            return False
         result = self.db.orders.update_one(
             {"order_id": order_id},
-            {"$set": {"verified_by_cs_raider_bot": verified}},
+            {"$set": {"verified_by_cs_raider_bot": verification_status}},
         )
         return result.matched_count > 0
 
-    def verify_order_for_message(self, chat_id: int, message_id: int, verified: bool) -> str | None:
+    def verify_order_for_message(self, chat_id: int, message_id: int, verification_status: str) -> str | None:
         message = self.db.telegram_order_messages.find_one(
             {"chat_id": chat_id, "message_id": message_id},
             {"order_id": 1},
@@ -102,6 +104,6 @@ class PaymentRepository:
         if not message or not message.get("order_id"):
             return None
         order_id = str(message["order_id"])
-        if not self.set_order_verified(order_id, verified):
+        if not self.set_order_verification_status(order_id, verification_status):
             return None
         return order_id

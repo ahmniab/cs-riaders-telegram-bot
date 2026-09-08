@@ -1,6 +1,6 @@
 # Telegram payment review bot
 
-Telegram bot for the CS Raiders MongoDB payment data. It shows only pending payment requests assigned to the authenticated reviewer’s configured payment numbers. An authorized reviewer can react with 👍 to an order message sent by the bot to set `verified_by_cs_raider_bot=true`; removing 👍 sets it back to `false`.
+Telegram bot for the CS Raiders MongoDB payment data. It shows pending payment requests assigned to the authenticated reviewer’s configured payment numbers. An authorized reviewer can react with 👍 to set `verified_by_cs_raider_bot="verified"`, 👎 to set it to `"disproved"`, or any other reaction/removal to reset it to `"pending"`. New orders start as `"pending"`.
 
 ## Setup
 
