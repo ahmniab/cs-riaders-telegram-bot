@@ -22,7 +22,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Use `/payments` or `/payment` in an allowed group. Use `/payments ORD-ABC123` or `/payments RCH-ABC123` to request one pending record.
+Use `/payments` or `/payment` in an allowed group. Use `/payments ORD-ABC123` or `/payments RCH-ABC123` to request one pending record. Use `/preparing_books` (or `/in_preparation`) to view all book and print orders currently in preparation; pass an order ID to view one specific order, for example `/preparing_books ORD-ABC123`.
 
 Only order messages sent by this bot can be verified: the bot stores each displayed order message’s Telegram chat/message ID in MongoDB so reactions can be matched to the correct order. Other reactions are ignored, and the reacting user must be authorized for that chat.
 

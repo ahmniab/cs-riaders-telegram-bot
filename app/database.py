@@ -73,6 +73,39 @@ class PaymentRepository:
             recharge["_payment_type"] = "wallet_recharge"
         return recharge
 
+    def preparing_book_orders(self, reviewer: Reviewer, skip: int, limit: int) -> tuple[list[dict], int]:
+        numbers = sorted({variant for number in reviewer.allowed_payment_numbers for variant in payment_number_variants(number)})
+        query = {
+            "status": "preparing",
+            "deleted_by_admin": {"$ne": True},
+            "transferred_to": {"$in": numbers},
+            "$or": [
+                {"is_print_order": True},
+                {"order_type": {"$in": ["book", "book_print"]}},
+                {"items.type": {"$in": ["book", "book_print"]}},
+            ],
+        }
+        orders = [dict(doc, _payment_type="order") for doc in self.db.orders.find(query).sort("created_at", DESCENDING)]
+        total = len(orders)
+        return orders[skip : skip + limit], total
+
+    def get_preparing_book_order(self, reviewer: Reviewer, order_id: str) -> dict | None:
+        numbers = sorted({variant for number in reviewer.allowed_payment_numbers for variant in payment_number_variants(number)})
+        order = self.db.orders.find_one({
+            "order_id": order_id,
+            "status": "preparing",
+            "deleted_by_admin": {"$ne": True},
+            "transferred_to": {"$in": numbers},
+            "$or": [
+                {"is_print_order": True},
+                {"order_type": {"$in": ["book", "book_print"]}},
+                {"items.type": {"$in": ["book", "book_print"]}},
+            ],
+        })
+        if order:
+            order["_payment_type"] = "order"
+        return order
+
     def record_order_message(self, chat_id: int, message_id: int, order_id: str) -> None:
         # This link is required because Telegram reaction updates do not include
         # the text or caption of the message being reacted to.

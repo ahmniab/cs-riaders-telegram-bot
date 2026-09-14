@@ -21,12 +21,13 @@ def format_datetime(value: object) -> str:
     return value.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def format_payment(payment: dict) -> str:
+def format_payment(payment: dict, include_student_number: bool = False) -> str:
     amount = payment.get("total", payment.get("amount", "Unknown"))
     reference = payment.get("vf_cash_ref") or payment.get("sender_phone") or "Unknown"
     student = payment.get("student_name") or payment.get("student_id") or "Unknown"
+    is_preparing_book = payment.get("status") == "preparing"
     lines = [
-        "<b>💳 Payment request</b>",
+        "<b>📚 Book order in preparation</b>" if is_preparing_book else "<b>💳 Payment request</b>",
         f"<b>Type:</b> {html.escape(payment_type_label(payment))}",
         f"<b>ID:</b> <code>{html.escape(payment_id(payment))}</code>",
         f"<b>Student:</b> {html.escape(str(student))}",
@@ -34,8 +35,17 @@ def format_payment(payment: dict) -> str:
         f"<b>Payment number:</b> {html.escape(str(payment.get('transferred_to') or 'Unknown'))}",
         f"<b>Reference/sender:</b> {html.escape(str(reference))}",
         f"<b>Created:</b> {html.escape(format_datetime(payment.get('created_at')))}",
-        "<b>Status:</b> Pending review",
+        "<b>Status:</b> In preparation" if is_preparing_book else "<b>Status:</b> Pending review",
     ]
+    if is_preparing_book:
+        titles = [item.get("title") for item in payment.get("items", []) if item.get("title")]
+        if titles:
+            lines.insert(4, f"<b>Book:</b> {html.escape(' + '.join(map(str, titles)))}")
+        if include_student_number:
+            student_number = payment.get("student_id") or "Unknown"
+            lines.insert(4, f"<b>Student number:</b> {html.escape(str(student_number))}")
+        if payment.get("shipping_address"):
+            lines.append(f"<b>Shipping address:</b> {html.escape(str(payment['shipping_address']))}")
     if payment.get("package_name"):
         lines.insert(4, f"<b>Package:</b> {html.escape(str(payment['package_name']))}")
     return "\n".join(lines)
@@ -59,4 +69,3 @@ def resolve_receipt_path(payment: dict, reference_root: Path) -> Path | None:
     except OSError:
         return None
     return candidate if candidate.is_file() else None
-

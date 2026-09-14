@@ -61,6 +61,48 @@ class PaymentBot:
             return
         await self.send_page(update.effective_message, reviewer, 0)
 
+    async def preparing_books(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        reviewer = self.reviewer(update)
+        if reviewer is None:
+            await update.effective_message.reply_text(UNAUTHORIZED_MESSAGE)
+            return
+        requested_id = context.args[0] if context.args else None
+        if requested_id:
+            order = self.repository.get_preparing_book_order(reviewer, requested_id)
+            if not order:
+                await update.effective_message.reply_text("No book order in preparation was found.")
+                return
+            await self.send_payment(
+                update.effective_message,
+                order,
+                include_receipt=False,
+                include_student_number=True,
+            )
+            return
+        await self.send_preparing_books_page(update.effective_message, reviewer, 0)
+
+    async def send_preparing_books_page(self, message, reviewer, page: int) -> None:
+        skip = page * self.settings.page_size
+        orders, total = self.repository.preparing_book_orders(reviewer, skip, self.settings.page_size)
+        if not orders:
+            await message.reply_text("No books are currently in preparation for your assigned payment numbers.")
+            return
+        await message.reply_text(f"Books in preparation {skip + 1}-{skip + len(orders)} of {total}:")
+        for order in orders:
+            await self.send_payment(
+                message,
+                order,
+                include_receipt=False,
+                include_student_number=True,
+            )
+        buttons = []
+        if page > 0:
+            buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"preparing_books:{page - 1}"))
+        if skip + len(orders) < total:
+            buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"preparing_books:{page + 1}"))
+        if buttons:
+            await message.reply_text("Navigate:", reply_markup=InlineKeyboardMarkup([buttons]))
+
     async def send_page(self, message, reviewer, page: int) -> None:
         skip = page * self.settings.page_size
         payments, total = self.repository.pending_requests(reviewer, skip, self.settings.page_size)
@@ -78,9 +120,15 @@ class PaymentBot:
         if buttons:
             await message.reply_text("Navigate:", reply_markup=InlineKeyboardMarkup([buttons]))
 
-    async def send_payment(self, message, payment: dict) -> None:
-        text = format_payment(payment)
-        receipt = resolve_receipt_path(payment, self.settings.receipt_storage_root)
+    async def send_payment(
+        self,
+        message,
+        payment: dict,
+        include_receipt: bool = True,
+        include_student_number: bool = False,
+    ) -> None:
+        text = format_payment(payment, include_student_number=include_student_number)
+        receipt = resolve_receipt_path(payment, self.settings.receipt_storage_root) if include_receipt else None
         if receipt:
             with receipt.open("rb") as image:
                 sent_message = await message.reply_photo(
@@ -159,11 +207,14 @@ class PaymentBot:
             await query.message.reply_text(UNAUTHORIZED_MESSAGE)
             return
         page = int(query.data.split(":", 1)[1])
-        await self.send_page(query.message, reviewer, page)
+        if query.data.startswith("preparing_books:"):
+            await self.send_preparing_books_page(query.message, reviewer, page)
+        else:
+            await self.send_page(query.message, reviewer, page)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if self.reviewer(update) is not None:
-            await update.effective_message.reply_text("Use /payments to view pending payment requests.")
+            await update.effective_message.reply_text("Use /payments for pending payments or /preparing_books to view books in preparation.")
         else:
             await update.effective_message.reply_text(UNAUTHORIZED_MESSAGE)
 
@@ -174,6 +225,8 @@ class PaymentBot:
                 "/payments - View pending payment requests\n"
                 "/payment - Same as /payments\n"
                 "/pay - Short alias for /payments\n"
+                "/preparing_books - View all book orders currently in preparation\n"
+                "/in_preparation - Same as /preparing_books\n"
                 "/help - Show this help message"
             )
         else:
@@ -184,6 +237,8 @@ class PaymentBot:
             BotCommand("payments", "View pending payment requests"),
             BotCommand("payment", "View pending payment requests"),
             BotCommand("pay", "View pending payment requests"),
+            BotCommand("preparing_books", "View books in preparation"),
+            BotCommand("in_preparation", "View books in preparation"),
             BotCommand("help", "Show available commands"),
         ])
 
@@ -232,8 +287,10 @@ class PaymentBot:
         application.add_handler(CommandHandler("payments", self.payments))
         application.add_handler(CommandHandler("payment", self.payments))
         application.add_handler(CommandHandler("pay", self.payments))
+        application.add_handler(CommandHandler("preparing_books", self.preparing_books))
+        application.add_handler(CommandHandler("in_preparation", self.preparing_books))
         application.add_handler(CommandHandler("help", self.help))
-        application.add_handler(CallbackQueryHandler(self.pagination, pattern=r"^payments:\d+$"))
+        application.add_handler(CallbackQueryHandler(self.pagination, pattern=r"^(payments|preparing_books):\d+$"))
         application.add_handler(
             MessageReactionHandler(
                 self.reaction,
