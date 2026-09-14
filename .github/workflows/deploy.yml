@@ -80,6 +80,9 @@ jobs:
             set -Eeuo pipefail
             mv /home/botuser/.env.tmp /home/botuser/.env
             chmod 600 /home/botuser/.env
+            if ! /home/botuser/app/.venv/bin/python -m pip --version >/dev/null 2>&1; then
+              /home/botuser/app/.venv/bin/python -m ensurepip --upgrade
+            fi
             /home/botuser/app/.venv/bin/python -m pip install --requirement /home/botuser/app/requirements.txt
 
       - name: Restart user service
