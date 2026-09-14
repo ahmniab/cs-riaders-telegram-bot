@@ -1,0 +1,116 @@
+name: Deploy bot
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      MONGO_DB_NAME: ${{ secrets.MONGO_DB_NAME }}
+      REVIEWERS_CONFIG: ${{ secrets.REVIEWERS_CONFIG }}
+      RECEIPT_STORAGE_ROOT: ${{ secrets.RECEIPT_STORAGE_ROOT }}
+      PAGE_SIZE: ${{ secrets.PAGE_SIZE }}
+      LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Sync application files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          username: botuser
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          source: "main.py,requirements.txt,reviewers.yaml,app"
+          target: /home/botuser/app
+          overwrite: true
+
+      - name: Create deployment environment file
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          {
+            printf 'TELEGRAM_BOT_TOKEN=%s\n' "${TELEGRAM_BOT_TOKEN}"
+            printf 'MONGO_URI=%s\n' "${MONGO_URI}"
+            printf 'MONGO_DB_NAME=%s\n' "${MONGO_DB_NAME:-cs_raiders_db}"
+            printf 'REVIEWERS_CONFIG=%s\n' "${REVIEWERS_CONFIG:-reviewers.yaml}"
+            printf 'RECEIPT_STORAGE_ROOT=%s\n' "${RECEIPT_STORAGE_ROOT:-/home/botuser/receipts}"
+            printf 'PAGE_SIZE=%s\n' "${PAGE_SIZE:-5}"
+            printf 'LOG_LEVEL=%s\n' "${LOG_LEVEL:-INFO}"
+          } > .env.tmp
+
+      - name: Upload deployment environment file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          username: botuser
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          source: .env.tmp
+          target: /home/botuser
+          overwrite: true
+
+      - name: Install dependencies and activate environment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          username: botuser
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          script: |
+            set -Eeuo pipefail
+            mv /home/botuser/.env.tmp /home/botuser/.env
+            chmod 600 /home/botuser/.env
+            /home/botuser/app/.venv/bin/python -m pip install --requirement /home/botuser/app/requirements.txt
+
+      - name: Restart user service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          username: botuser
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          script: |
+            set -Eeuo pipefail
+            export XDG_RUNTIME_DIR=/run/user/$(id -u)
+            systemctl --user daemon-reload
+            systemctl --user enable bot.service
+            systemctl --user restart bot.service
+
+      - name: Verify service health
+        run: |
+          set -Eeuo pipefail
+          echo "Waiting 5 seconds for bot.service to initialize..."
+          sleep 5
+          echo "Health check is running..."
+
+      - name: Confirm service health remotely
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          username: botuser
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          script: |
+            set -Eeuo pipefail
+            export XDG_RUNTIME_DIR=/run/user/$(id -u)
+            if systemctl --user is-active --quiet bot.service; then
+              echo "Health check passed: bot.service is active."
+            else
+              echo "Health check failed: bot.service is not active." >&2
+              systemctl --user status bot.service --no-pager || true
+              exit 1
+            fi
