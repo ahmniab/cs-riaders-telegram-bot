@@ -51,6 +51,7 @@ jobs:
             printf 'PAGE_SIZE=%s\n' "${PAGE_SIZE:-5}"
             printf 'LOG_LEVEL=%s\n' "${LOG_LEVEL:-INFO}"
           } > .env.tmp
+          chmod 644 .env.tmp
 
       - name: Upload deployment environment file
         uses: appleboy/scp-action@v0.1.7
@@ -62,6 +63,11 @@ jobs:
           source: .env.tmp
           target: /home/botuser
           overwrite: true
+
+      - name: Remove temporary environment file
+        run: |
+          set -Eeuo pipefail
+          rm -f .env.tmp
 
       - name: Install dependencies and activate environment
         uses: appleboy/ssh-action@v1.0.3
